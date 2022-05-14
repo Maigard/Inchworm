@@ -27,7 +27,7 @@
 
 unsigned int IRKE_COMMON::MONITOR = 0;
 size_t KMER_SIZE = 25;
-int MAX_THREADS = 6;
+int MAX_THREADS = 36;
 
 // various devel params
 bool IRKE_COMMON::__DEVEL_no_kmer_sort = false;

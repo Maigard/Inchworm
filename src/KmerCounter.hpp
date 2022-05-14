@@ -31,6 +31,8 @@ struct hashme {
 };
 
 
+typedef pair<kmer_int_type_t,unsigned int> Kmer_Occurence_Pair;
+
 #ifdef __GOOGLE__
 
 // #warning "******** using GOOGLE SPARSEHASH for Kmer graph *********"
@@ -50,15 +52,17 @@ typedef std::hash_map<kmer_int_type_t,unsigned int, hashme, eqstr>::iterator Kme
 typedef std::hash_map<kmer_int_type_t,unsigned int, hashme, eqstr>::const_iterator Kmer_counter_map_const_iterator;
 
 #else
-#include <ext/hash_map>
-
-typedef __gnu_cxx::hash_map<kmer_int_type_t,unsigned int, hashme, eqstr> Kmer_counter_map;
-typedef __gnu_cxx::hash_map<kmer_int_type_t,unsigned int, hashme, eqstr>::iterator Kmer_counter_map_iterator;
-typedef __gnu_cxx::hash_map<kmer_int_type_t,unsigned int, hashme, eqstr>::const_iterator Kmer_counter_map_const_iterator;
+#include <vector>
+typedef vector <Kmer_Occurence_Pair> Kmer_counter_map;
+typedef vector <Kmer_Occurence_Pair>::iterator Kmer_counter_map_iterator;
+typedef vector <Kmer_Occurence_Pair>::const_iterator Kmer_counter_map_const_iterator;
+//#include <ext/hash_map>
+//
+//typedef __gnu_cxx::hash_map<kmer_int_type_t,unsigned int, hashme, eqstr> Kmer_counter_map;
+//typedef __gnu_cxx::hash_map<kmer_int_type_t,unsigned int, hashme, eqstr>::iterator Kmer_counter_map_iterator;
+//typedef __gnu_cxx::hash_map<kmer_int_type_t,unsigned int, hashme, eqstr>::const_iterator Kmer_counter_map_const_iterator;
 
 #endif
-
-typedef pair<kmer_int_type_t,unsigned int> Kmer_Occurence_Pair;
 
 
 class KmerCounter {
@@ -70,11 +74,19 @@ public:
     
     unsigned int get_kmer_length();
     unsigned long size();
+    void resize(std::size_t hint);
     
     void add_sequence(string& sequence, unsigned int cov=1);
     
     bool add_kmer (kmer_int_type_t, unsigned int count);
+    bool add_kmer_mt (kmer_int_type_t, unsigned int count);
     bool add_kmer (string kmer, unsigned int count);
+
+    bool insert_kmer (kmer_int_type_t, unsigned int count);
+    bool insert_kmer_at (unsigned int record, kmer_int_type_t, unsigned int count);
+    bool insert_kmer (string kmer, unsigned int count);
+
+    void finish_inserts();
     
     void describe_kmers();
     void dump_kmers_to_file(string& outfilename);
@@ -131,6 +143,7 @@ public:
   
   
 private:
+  bool _KmerSort(Kmer_Occurence_Pair a, Kmer_Occurence_Pair b);
   
   unsigned int _kmer_length;
   

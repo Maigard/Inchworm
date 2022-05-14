@@ -17,6 +17,11 @@ public:
     
     bool hasNext();  // prime for next 
     Fasta_entry getNext(); // retrieves next fasta entry, or NULL if EOF.
+
+    bool hasNext_mt();  // hasNext without locking
+    Fasta_entry getNext_mt(); // getNext without locking
+
+    unsigned long count_sequences();
     
     map<string,string> retrieve_all_seqs_hash();
     

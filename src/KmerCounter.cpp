@@ -19,7 +19,6 @@ KmerCounter::KmerCounter(unsigned int kmer_length, bool is_ds) {
     this->_kmer_length = kmer_length;
     _DS_MODE = is_ds;
     
-    
 #ifdef __GOOGLE__
     
     kmer_int_type_t delete_val = 0xFFFFFFFFFFFFFFFFll;
@@ -52,6 +51,9 @@ unsigned long KmerCounter::size() {
     return(_kmer_counter.size());
 }
 
+void KmerCounter::resize(std::size_t hint) {
+    _kmer_counter.resize(hint);
+}
 
 void KmerCounter::describe_kmers() {
     
@@ -371,7 +373,9 @@ Kmer_counter_map_iterator KmerCounter::find_kmer(kmer_int_type_t kmer_val) {
         kmer_val = get_DS_kmer_val(kmer_val, _kmer_length);
     }
 
-	return _kmer_counter.find(kmer_val);
+    //TODO implement Find in Vector
+    return _kmer_counter.end();
+	// return _kmer_counter.find(kmer_val);
 }
 
 
@@ -473,22 +477,39 @@ kmer_int_type_t KmerCounter::get_kmer_intval(string kmer) {
 }
 
 
-bool KmerCounter::add_kmer (kmer_int_type_t kmer_val, unsigned int count) {
+bool KmerCounter::insert_kmer_at (unsigned int record, kmer_int_type_t kmer_val, unsigned int count) {
 
     if (_DS_MODE) {
         kmer_val = get_DS_kmer_val(kmer_val, _kmer_length);
     }
     
-    #pragma omp critical (HashMap)
-    {
-        _kmer_counter[kmer_val]+= count;
-    }
+    _kmer_counter[record] = Kmer_Occurence_Pair(kmer_val, count);
     
     return(true);
     
 }
 
+bool KmerCounter::add_kmer (kmer_int_type_t kmer_val, unsigned int count) {
+    bool ret;
+    #pragma omp critical (HashMap)
+    {
+        ret = add_kmer_mt(kmer_val, count);
+    }
+    return ret;
+}
 
+bool KmerCounter::add_kmer_mt (kmer_int_type_t kmer_val, unsigned int count) {
+
+    if (_DS_MODE) {
+        kmer_val = get_DS_kmer_val(kmer_val, _kmer_length);
+    }
+    
+    //TODO: Implement insert
+    // _kmer_counter[kmer_val] += count;
+    
+    return(true);
+    
+}
 
 bool KmerCounter::add_kmer(string kmer, unsigned int count) {
     
@@ -502,6 +523,29 @@ bool KmerCounter::add_kmer(string kmer, unsigned int count) {
     bool ret = add_kmer(kmer_val, count);
 
     return(ret);
+}
+
+bool KmerCounter::_KmerSort(Kmer_Occurence_Pair a, Kmer_Occurence_Pair b) {
+    return a.first > b.first;
+}
+
+void KmerCounter::finish_inserts() {
+    unsigned long int section_size = this->_kmer_counter.size() / omp_get_num_threads();
+    #pragma omp parallel
+    {
+        Kmer_counter_map_iterator start = _kmer_counter.begin() + (omp_get_thread_num() * section_size);
+        Kmer_counter_map_iterator middle;
+        Kmer_counter_map_iterator end = start + ( omp_get_thread_num() + 1 ) * section_size - 1;
+        Kmer_counter_map_iterator i;
+        Kmer_Occurence_Pair swap;
+
+        for(unsigned long int width = 2; width < section_size; width <<= 1) {
+            for(i = start; i < end; i += width) {
+                // std::inplace_merge(i, (width / 2) + i, i + width, _KmerSort);
+            }
+            // std::inplace_merge(i, (end - i) / 2, i + width, _KmerSort);
+        }
+    }
 }
 
 vector<Kmer_Occurence_Pair> KmerCounter::get_forward_kmer_candidates(kmer_int_type_t seed_kmer) {

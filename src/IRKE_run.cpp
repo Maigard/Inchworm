@@ -26,7 +26,7 @@
 using namespace std;
 
 
-int IRKE_COMMON::MAX_THREADS_READ_PARSING = 6;  // going higher leads to decreased performance in Inchworm due to thread collisions.
+int IRKE_COMMON::MAX_THREADS_READ_PARSING = 36;  // going higher leads to decreased performance in Inchworm due to thread collisions.
 int IRKE_COMMON::NUM_THREADS = -1; // use OMP_NUM_THREADS by default.
 bool IRKE_COMMON::KEEP_TMP_FILES = false;
 

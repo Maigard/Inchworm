@@ -61,59 +61,65 @@ void Fasta_reader::_init_reader() {
 
 bool Fasta_reader::hasNext() {
     bool ret;
-    
     #pragma omp critical (FileReader)
-    {
-        ret = !(this->_filereader.eof());
-        
-        // see if we're reading only part of the file.
-        if (ret && this->end_reading > 0) {
-            if (this->file_byte_pos >= end_reading) { // bad:  this->_filereader.tellg() >= end_reading) {
-                // force it to go to the end of the file
-                this->_filereader.seekg(0, this->_filereader.end);
-                ret = false;
-            }
+    ret = this->hasNext_mt();
+    return ret;
+}
+
+bool Fasta_reader::hasNext_mt() {
+    bool ret;
+    
+    ret = !(this->_filereader.eof());
+    
+    // see if we're reading only part of the file.
+    if (ret && this->end_reading > 0) {
+        if (this->file_byte_pos >= end_reading) { // bad:  this->_filereader.tellg() >= end_reading) {
+            // force it to go to the end of the file
+            this->_filereader.seekg(0, this->_filereader.end);
+            ret = false;
         }
     }
     return ret;
 }
 
-
 Fasta_entry Fasta_reader::getNext() {
+    Fasta_entry fe;
+    #pragma omp critical (FileReader)
+    fe = this->getNext_mt();
+    return fe;
+}
+
+Fasta_entry Fasta_reader::getNext_mt() {
     
     string sequence;
     string header;
     bool ret;
 
-    #pragma omp critical (FileReader)
+    header = this->_lastline;
+    
+    ret = !(this->_filereader.eof());
+    if (ret == true)
     {
-        header = this->_lastline;
-        
-        ret = !(this->_filereader.eof());
-        if (ret == true)
-        {
-            this->_lastline = "";
-            while ((! this->_filereader.eof()) && this->_lastline[0] != '>') {
-                getline(this->_filereader, this->_lastline);
-                
-                this->file_byte_pos += this->_lastline.length() + 1;
+        this->_lastline = "";
+        while ((! this->_filereader.eof()) && this->_lastline[0] != '>') {
+            getline(this->_filereader, this->_lastline);
+            
+            this->file_byte_pos += this->_lastline.length() + 1;
 
-                // cerr << "Comparing mine: " << this->file_byte_pos << " to " << this->_filereader.tellg() << endl;
-                
-                if (this->_lastline[0] != '>') {
-                    sequence += this->_lastline;
-                }
+            // cerr << "Comparing mine: " << this->file_byte_pos << " to " << this->_filereader.tellg() << endl;
+            
+            if (this->_lastline[0] != '>') {
+                sequence += this->_lastline;
             }
         }
+    }
 
-        // check if only reading section of a file
-        if (this->end_reading > 0) {
-            if (this->file_byte_pos >= end_reading) { // bad: this->_filereader.tellg() >= end_reading) {
-                // force it to go to the end of the file
-                this->_filereader.seekg(0, this->_filereader.end);
-            }
+    // check if only reading section of a file
+    if (this->end_reading > 0) {
+        if (this->file_byte_pos >= end_reading) { // bad: this->_filereader.tellg() >= end_reading) {
+            // force it to go to the end of the file
+            this->_filereader.seekg(0, this->_filereader.end);
         }
-
     }
     
     if (ret == true)
@@ -126,6 +132,23 @@ Fasta_entry Fasta_reader::getNext() {
         Fasta_entry fe("", "");
         return(fe);
     }
+}
+
+unsigned long Fasta_reader::count_sequences() {
+    _filereader.seekg(file_byte_pos);
+    char buffer[1024*1024];
+    long unsigned int to_read;
+    long unsigned int sum = 0;
+    while(file_byte_pos < end_reading) {
+        to_read = end_reading - file_byte_pos;
+        if (sizeof(buffer) < to_read) {
+            to_read = sizeof(buffer);
+        }
+        _filereader.read(buffer, to_read);
+        sum += count(buffer, buffer + to_read, '>');
+        file_byte_pos += to_read;
+    }
+    return sum;
 }
 
 map<string,string> Fasta_reader::retrieve_all_seqs_hash() {

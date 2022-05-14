@@ -5,6 +5,7 @@
 #include <sstream>
 #include <fstream>
 #include <iterator>
+#include <list>
 #include <math.h>
 #include <algorithm>
 #include <vector>
@@ -15,6 +16,7 @@
 #else
 #define omp_get_max_threads() 1
 #define omp_get_num_threads() 1
+#define omp_set_num_threads(_) 1
 #define omp_get_thread_num() 0
 #endif
 
@@ -25,6 +27,7 @@
 #include "stacktrace.hpp"
 #include "irke_common.hpp"
 
+using namespace std;
 
 const unsigned int MAX_RECURSION_HARD_STOP = 50;
 
@@ -84,7 +87,8 @@ void IRKE::populate_Kmers_from_kmers(const string& fasta_filename) {
 	unsigned long sum, 
                   *record_counter = new unsigned long[omp_get_max_threads()];
 	unsigned long start, end;
-
+	unsigned long file_size, section_size;
+	unsigned long *kmer_count = new unsigned long[omp_get_max_threads()];
 
     omp_set_num_threads(IRKE_COMMON::MAX_THREADS_READ_PARSING); // place limit here because performance deteriorates beyond this value.
 
@@ -96,15 +100,84 @@ void IRKE::populate_Kmers_from_kmers(const string& fasta_filename) {
 	cerr << "-reading Kmer occurrences..." << "\n";
 	start = time(NULL);
 
-	Fasta_reader fasta_reader(fasta_filename);
 
-  #pragma omp parallel private (myTid)
+  	ifstream fasta_file;
+  	fasta_file.open(fasta_filename.c_str(), ::ifstream::ate | std::ifstream::binary);
+  	file_size = fasta_file.tellg();
+  	fasta_file.close();
+	file_size = 340000000;
+
+  	section_size = file_size / omp_get_max_threads();
+	cerr << "Reading sections of size " << section_size << endl;
+
+  	#pragma omp parallel private (myTid)
 	{
+		long unsigned int my_record;
+		long unsigned int total_records;
+		
 		myTid = omp_get_thread_num();
+		long unsigned int my_start = myTid * section_size;
+		long unsigned int my_end = ((myTid + 1) * section_size) - 1;
+		
 		record_counter[myTid] = 0;
 
+		cerr << "Thread " << myTid << 
+			" reading section " << my_start  << 
+			" to " << my_end << " size " << my_end - my_start << endl;
+
+		ifstream fasta_file;
+		fasta_file.open(fasta_filename.c_str(), std::ifstream::binary);
+		fasta_file.seekg(my_start);
+		char buffer[1024*1024];
+		long unsigned int to_read, cur_pos = my_start;
+		long unsigned int next_report=1000000;
+		while(cur_pos < my_end) {
+			to_read = std::min(sizeof(buffer), my_end - cur_pos);
+			fasta_file.read(buffer, to_read);
+			record_counter[myTid] += count(buffer, buffer + to_read, '>');
+			if (myTid == 0 && record_counter[0] > next_report)
+			{
+				sum = record_counter[0];
+				for (i=1; i<omp_get_num_threads(); i++) {
+					sum+= record_counter[i];
+					// cerr << record_counter[i] << " ";
+				}
+				// cerr << endl;
+				cerr << "\r [" << sum/1000000 << "M] Kmers counted.     ";
+				next_report += 1000000;
+			}
+			cur_pos += to_read;
+
+		}
+		fasta_file.close();
+		cerr << "read " << record_counter[myTid] << " entries in thread " << myTid << " cur_pos " << cur_pos << " my_end " << my_end << endl;
+
+		#pragma omp barrier
+		cerr << "Counting total kmers (" << myTid << ")" << endl;
+		if(myTid == 0) {
+			total_records = 0;
+			for(int i = 0; i < omp_get_num_threads(); i++) {
+				total_records += record_counter[i];
+			}
+			cerr << "\r [" << total_records/1000000 << "M] total Kmers counted.     ";
+			kcounter.resize(total_records);
+		}
+		cerr << "Counted total kmers (" << myTid << ")" << endl;
+		#pragma omp barrier
+		cerr << "Setting starting record (" << myTid << ")" << endl;
+		if(myTid == 0) {
+			my_record = 0;
+		} else {
+			my_record = record_counter[myTid-1] + 1;
+		}
+		cerr << "Setting starting to " << my_record << " (" << myTid << ")" << endl;
+		#pragma omp barrier
+		record_counter[myTid] = 0;
+
+		Fasta_reader fasta_reader(fasta_filename, my_start, my_end);
+
 		while (true) {
-			Fasta_entry fe = fasta_reader.getNext();
+			Fasta_entry fe = fasta_reader.getNext_mt();
 			if (fe.get_sequence() == "") break;
 
             record_counter[myTid]++;
@@ -127,15 +200,30 @@ void IRKE::populate_Kmers_from_kmers(const string& fasta_filename) {
 
 			kmer_int_type_t kmer = kcounter.get_kmer_intval(seq);
 			unsigned int count = atoi(fe.get_header().c_str());
-			kcounter.add_kmer(kmer, count);
+			kcounter.insert_kmer_at(my_record, kmer, count);
 		}
+		cerr << "finished loading kmers into vector (" << myTid << ")" << endl;
 	}
+	cerr << endl;
+		// for(i=1; i < omp_get_max_threads(); i++)
+	// 	pair_lists[0].splice(pair_lists[0].end(), pair_lists[i]);
+
+	// record_counter[0] = 0;
+	// while(! pair_lists[0].empty()) {
+	// 	Kmer_Occurence_Pair pair = pair_lists[0].front();
+	// 	kcounter.add_kmer_mt(pair.first, pair.second);
+	// 	pair_lists[0].pop_front();
+	// 	if (++record_counter[0] % 100000 == 0)
+	// 		cerr << "\r [" << record_counter[0]/1000000 << "M] Kmers hashed.     ";
+	// }
+	cerr << endl;
 	end = time(NULL);
 
 	sum = record_counter[0];
 	for (i=1; i<omp_get_max_threads(); i++)
 		sum+= record_counter[i];
     delete [] record_counter;
+	delete [] kmer_count;
 
 	cerr << "\n" << " done parsing " << sum << " Kmers, " << kcounter.size() << " added, taking " << (end-start) << " seconds." << "\n";
 
@@ -181,14 +269,14 @@ void IRKE::populate_Kmers_from_fasta(const string& fasta_filename, bool reassemb
 		record_counter[myTid] = 0;
 		
 		while (fasta_reader.hasNext()) {
-			Fasta_entry fe = fasta_reader.getNext();
+			Fasta_entry fe = fasta_reader.getNext_mt();
             string accession = fe.get_accession();
 
-            #pragma omp atomic            
-            entry_num++;
             record_counter[myTid]++;
 			
 			if (IRKE_COMMON::MONITOR >= 4) {
+				#pragma omp atomic            
+				entry_num++;
 				cerr << "[" << entry_num << "] acc: " << accession << ", by thread no: " << myTid << "\n";;
 			}
 			else if (IRKE_COMMON::MONITOR) {
