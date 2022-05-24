@@ -116,7 +116,7 @@ Fasta_entry Fasta_reader::getNext_mt() {
 
     // check if only reading section of a file
     if (this->end_reading > 0) {
-        if (this->file_byte_pos >= end_reading) { // bad: this->_filereader.tellg() >= end_reading) {
+        if (this->file_byte_pos >= end_reading && !this->_filereader.eof()) { // bad: this->_filereader.tellg() >= end_reading) {
             // force it to go to the end of the file
             this->_filereader.seekg(0, this->_filereader.end);
         }
