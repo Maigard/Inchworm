@@ -32,6 +32,16 @@ struct hashme {
 
 
 typedef pair<kmer_int_type_t,unsigned int> Kmer_Occurence_Pair;
+struct Kmer_Occurence_Pair_Cmp {
+  bool operator()(const Kmer_Occurence_Pair& value, const kmer_int_type_t& key)
+  {
+      return (value.first < key);
+  }
+  bool operator()(const kmer_int_type_t& key, const Kmer_Occurence_Pair& value)
+  {
+      return (key < value.first);
+  }
+};
 
 #ifdef __GOOGLE__
 
@@ -78,13 +88,13 @@ public:
     
     void add_sequence(string& sequence, unsigned int cov=1);
     
-    bool add_kmer (kmer_int_type_t, unsigned int count);
-    bool add_kmer_mt (kmer_int_type_t, unsigned int count);
-    bool add_kmer (string kmer, unsigned int count);
+    // bool add_kmer (kmer_int_type_t, unsigned int count);
+    // bool add_kmer_mt (kmer_int_type_t, unsigned int count);
+    // bool add_kmer (string kmer, unsigned int count);
 
-    bool insert_kmer (kmer_int_type_t, unsigned int count);
-    bool insert_kmer_at (unsigned int record, kmer_int_type_t, unsigned int count);
-    bool insert_kmer (string kmer, unsigned int count);
+    unsigned long prepare_inserts(std::size_t num_to_insert);
+    bool insert_kmer (unsigned long &location, kmer_int_type_t kmer_val, unsigned int count);
+    bool insert_kmer (unsigned long &location, string kmer, unsigned int count);
 
     void finish_inserts();
     
@@ -146,6 +156,8 @@ private:
   bool _KmerSort(Kmer_Occurence_Pair a, Kmer_Occurence_Pair b);
   
   unsigned int _kmer_length;
+  unsigned long _last_entry;
+  std::vector<unsigned long int> _insert_location;
   
   Kmer_counter_map _kmer_counter;
 

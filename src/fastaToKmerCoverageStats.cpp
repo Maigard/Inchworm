@@ -185,18 +185,41 @@ void populate_kmer_counter_from_kmers(KmerCounter& kcounter, string& kmers_fasta
         *record_counter = new unsigned long[omp_get_max_threads()];
     unsigned long start, end;
     // init record counter
+    unsigned long section_size;
     for (int i = 0; i < omp_get_max_threads(); i++) {
         record_counter[i] = 0;
     }
     cerr << "-reading Kmer occurrences..." << endl;
     start = time(NULL);
-    Fasta_reader fasta_reader(kmers_fasta_file);
+    Fasta_reader file_sizer(kmers_fasta_file);
+  	section_size = file_sizer.getFilelength() / omp_get_max_threads();
+	cerr << "Reading sections of size " << section_size << endl;
+
     #pragma omp parallel private (myTid)
     {
         myTid = omp_get_thread_num();
+        long unsigned int my_start = myTid * section_size;
+		long unsigned int my_end = ((myTid + 1) * section_size);
+
         record_counter[myTid] = 0;
+
+        Fasta_reader fasta_reader(kmers_fasta_file, my_start, my_end);
+		record_counter[myTid] = fasta_reader.countSequences();
+
+        #pragma omp barrier
+		if (myTid == 0) {
+			sum = record_counter[0];
+			for (i=1; i<omp_get_num_threads(); i++)
+				sum+= record_counter[i];	
+			kcounter.resize(sum);
+		}
+		#pragma omp barrier
+		unsigned long insert_iter = kcounter.prepare_inserts(record_counter[myTid]);
+
+		record_counter[myTid] = 0;
+
         while (true) {
-            Fasta_entry fe = fasta_reader.getNext();
+            Fasta_entry fe = fasta_reader.getNext_mt();
             if(fe.get_sequence() == "") break;
             record_counter[myTid]++;
             if(IRKE_COMMON::MONITOR) {
@@ -215,9 +238,10 @@ void populate_kmer_counter_from_kmers(KmerCounter& kcounter, string& kmers_fasta
             }
             kmer_int_type_t kmer = kcounter.get_kmer_intval(seq);
             unsigned int count = atoi(fe.get_header().c_str());
-            kcounter.add_kmer(kmer, count);
+            kcounter.insert_kmer(insert_iter, kmer, count);
         }
     }
+    kcounter.finish_inserts();
     end = time(NULL);
     sum = record_counter[0];
     for (i=1; i<omp_get_max_threads(); i++)

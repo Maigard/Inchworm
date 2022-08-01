@@ -16,6 +16,7 @@ KmerCounter::KmerCounter(unsigned int kmer_length, bool is_ds) {
         throw(stacktrace() + "\n\nKmer length exceeds max of 32");  // STORING KMERS AS 64-bit INTEGERS, 2-bit ENCODING.  CANNOT GO HIGHER THAN 32 BASES
     }
     
+    this->_last_entry = 0;
     this->_kmer_length = kmer_length;
     _DS_MODE = is_ds;
     
@@ -51,8 +52,18 @@ unsigned long KmerCounter::size() {
     return(_kmer_counter.size());
 }
 
-void KmerCounter::resize(std::size_t hint) {
-    _kmer_counter.resize(hint);
+void KmerCounter::resize(std::size_t new_size) {
+    _kmer_counter.resize(new_size);
+}
+
+unsigned long KmerCounter::prepare_inserts(std::size_t num_to_insert) {
+    unsigned long ret;
+    #pragma omp critical
+    { 
+        ret = _last_entry;
+        _last_entry += num_to_insert;
+    }
+    return ret;
 }
 
 void KmerCounter::describe_kmers() {
@@ -150,7 +161,6 @@ bool KmerCounter::prune_some_kmers(unsigned int min_count, float min_entropy, bo
         if (count == 0)
         	continue;
 
-        string kmer_str = get_kmer_string(kmer);
 
         if (count < min_count)
         {
@@ -170,6 +180,7 @@ bool KmerCounter::prune_some_kmers(unsigned int min_count, float min_entropy, bo
         
         if (prune_error_kmers)
         {
+            string kmer_str = get_kmer_string(kmer);
 
             // examine forward extension kmers
             vector<Kmer_Occurence_Pair> candidates = get_forward_kmer_candidates(kmer); //sorted descendingly
@@ -368,14 +379,19 @@ void KmerCounter::dump_kmers_to_file(string& filename) {
 
 Kmer_counter_map_iterator KmerCounter::find_kmer(kmer_int_type_t kmer_val) {
 
+    Kmer_counter_map_iterator ret;
+
 	if (_DS_MODE) {
         
         kmer_val = get_DS_kmer_val(kmer_val, _kmer_length);
     }
 
-    //TODO implement Find in Vector
-    return _kmer_counter.end();
-	// return _kmer_counter.find(kmer_val);
+    ret = lower_bound(_kmer_counter.begin(), _kmer_counter.end(), Kmer_Occurence_Pair(kmer_val, 0) );
+    if(ret->first == kmer_val) {
+        return ret;
+    } else {
+        return _kmer_counter.end();
+    }
 }
 
 
@@ -477,75 +493,94 @@ kmer_int_type_t KmerCounter::get_kmer_intval(string kmer) {
 }
 
 
-bool KmerCounter::insert_kmer_at (unsigned int record, kmer_int_type_t kmer_val, unsigned int count) {
+bool KmerCounter::insert_kmer(unsigned long &location, kmer_int_type_t kmer_val, unsigned int count) {
 
     if (_DS_MODE) {
         kmer_val = get_DS_kmer_val(kmer_val, _kmer_length);
     }
     
-    _kmer_counter[record] = Kmer_Occurence_Pair(kmer_val, count);
+    // #pragma omp critical 
+    // cerr << "inserting " << decode_kmer_from_intval(kmer_val, 25) << " " << count  << 
+    //     " into " << location << " in thread " << omp_get_thread_num() << endl;
+    _kmer_counter[location] = Kmer_Occurence_Pair(kmer_val, count);
+    location++;
     
     return(true);
     
 }
 
-bool KmerCounter::add_kmer (kmer_int_type_t kmer_val, unsigned int count) {
-    bool ret;
-    #pragma omp critical (HashMap)
-    {
-        ret = add_kmer_mt(kmer_val, count);
-    }
-    return ret;
-}
+// bool KmerCounter::add_kmer (kmer_int_type_t kmer_val, unsigned int count) {
+//     bool ret;
+//     #pragma omp critical (HashMap)
+//     {
+//         ret = add_kmer_mt(kmer_val, count);
+//     }
+//     return ret;
+// }
 
-bool KmerCounter::add_kmer_mt (kmer_int_type_t kmer_val, unsigned int count) {
+// bool KmerCounter::add_kmer_mt (kmer_int_type_t kmer_val, unsigned int count) {
 
-    if (_DS_MODE) {
-        kmer_val = get_DS_kmer_val(kmer_val, _kmer_length);
-    }
+//     if (_DS_MODE) {
+//         kmer_val = get_DS_kmer_val(kmer_val, _kmer_length);
+//     }
     
-    //TODO: Implement insert
-    // _kmer_counter[kmer_val] += count;
+//     //TODO: Implement insert
+//     // _kmer_counter[kmer_val] += count;
     
-    return(true);
+//     return(true);
     
-}
+// }
 
-bool KmerCounter::add_kmer(string kmer, unsigned int count) {
+// bool KmerCounter::add_kmer(string kmer, unsigned int count) {
     
-    // no storing of kmers containing non-GATC characters
-    if (contains_non_gatc(kmer)) { 
-        return(false);
-    }
+//     // no storing of kmers containing non-GATC characters
+//     if (contains_non_gatc(kmer)) { 
+//         return(false);
+//     }
     
-    kmer_int_type_t kmer_val = kmer_to_intval(kmer);
+//     kmer_int_type_t kmer_val = kmer_to_intval(kmer);
     
-    bool ret = add_kmer(kmer_val, count);
+//     bool ret = add_kmer(kmer_val, count);
 
-    return(ret);
-}
+//     return(ret);
+// }
 
 bool KmerCounter::_KmerSort(Kmer_Occurence_Pair a, Kmer_Occurence_Pair b) {
     return a.first > b.first;
 }
 
 void KmerCounter::finish_inserts() {
-    unsigned long int section_size = this->_kmer_counter.size() / omp_get_num_threads();
+    // for (long int cur = 0; cur != _kmer_counter.end() - _kmer_counter.begin(); cur++) {
+    //     cerr << decode_kmer_from_intval(_kmer_counter[cur].first, 25) << " " << _kmer_counter[cur].second << endl;
+    //     cerr << cur << " " << decode_kmer_from_intval(_kmer_counter[cur].first, 25) << endl;
+    // }
+    // cerr << endl;
+    // cerr << "sorting" << endl;
     #pragma omp parallel
     {
-        Kmer_counter_map_iterator start = _kmer_counter.begin() + (omp_get_thread_num() * section_size);
-        Kmer_counter_map_iterator middle;
-        Kmer_counter_map_iterator end = start + ( omp_get_thread_num() + 1 ) * section_size - 1;
-        Kmer_counter_map_iterator i;
-        Kmer_Occurence_Pair swap;
+        int num_threads = omp_get_num_threads();
+        int thread_num = omp_get_thread_num();
+        int next_power_2 = pow(2, ceil(log(num_threads)/log(2)));
+        unsigned long int section_size = _kmer_counter.size() / num_threads + 1;
+        Kmer_counter_map_iterator begin = _kmer_counter.begin();
 
-        for(unsigned long int width = 2; width < section_size; width <<= 1) {
-            for(i = start; i < end; i += width) {
-                // std::inplace_merge(i, (width / 2) + i, i + width, _KmerSort);
+        for(int i = 1; i <= next_power_2; i <<= 1) {
+            if(thread_num % i == 0) {
+                std::sort(begin + (section_size * thread_num), begin + std::min(_kmer_counter.size(), section_size * (thread_num + i) - 1));
             }
-            // std::inplace_merge(i, (end - i) / 2, i + width, _KmerSort);
+            #pragma omp barrier
         }
     }
+    // TODO: remove check
+    // kmer_int_type_t last = 0;
+    // for (Kmer_counter_map_iterator cur = _kmer_counter.begin(); cur != _kmer_counter.end(); cur++) {
+    //     cerr << decode_kmer_from_intval(cur->first, 25) << " " << cur->second << endl;
+    //     if (last > cur->first) {
+    //         cerr << decode_kmer_from_intval(last, 25) << " > " << decode_kmer_from_intval(cur->first, 25) << endl;
+    //         return;
+    //     }
+    //     last = cur->first;
+    // }
 }
 
 vector<Kmer_Occurence_Pair> KmerCounter::get_forward_kmer_candidates(kmer_int_type_t seed_kmer) {

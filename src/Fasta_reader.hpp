@@ -21,9 +21,11 @@ public:
     bool hasNext_mt();  // hasNext without locking
     Fasta_entry getNext_mt(); // getNext without locking
 
-    unsigned long count_sequences();
+    unsigned long countSequences();
     
     map<string,string> retrieve_all_seqs_hash();
+
+    long getFilelength();
     
     
     
@@ -31,13 +33,16 @@ private:
     ifstream _filereader;
     //bool _hasNext;
     string _lastline;
+    long start_reading; // optional file position to stop reading.
     long end_reading; // optional file position to stop reading.
+    long _file_length;
 
     long file_byte_pos;
 
 
     void _init_reader();
 
+    ofstream debugfile;
 };
 
 

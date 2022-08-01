@@ -2,6 +2,8 @@
 #include "sequenceUtil.hpp"
 #include "stacktrace.hpp"
 #include <algorithm>
+#include <iostream>
+#include <string>
 #include <omp.h>
 
 //constructor
@@ -11,6 +13,7 @@ Fasta_reader::Fasta_reader (string filename) {
     
     this->end_reading = -1; // turn off
     this->file_byte_pos = 0; // init
+    this->_file_length = -1;
 
     if (filename == "-") {
         filename = "/dev/fd/0"; // read from stdin
@@ -19,6 +22,11 @@ Fasta_reader::Fasta_reader (string filename) {
     if (! _filereader.is_open()) {
         throw(stacktrace() + "\n\nError, cannot open file " + filename );
     }
+    if (filename != "-") {
+        this->_filereader.seekg(0, ios_base::end);
+        this->_file_length = this->_filereader.tellg();
+        this->_filereader.seekg(this->file_byte_pos, _filereader.beg);
+    }
         
     this->_init_reader();
    
@@ -26,7 +34,7 @@ Fasta_reader::Fasta_reader (string filename) {
 
 Fasta_reader::Fasta_reader(string filename, long start_reading, long end_reading) {
 
-    this->file_byte_pos = start_reading;
+    this->start_reading = this->file_byte_pos = start_reading;
     this->end_reading = end_reading;
     
     this->_filereader.open(filename.c_str());
@@ -34,15 +42,16 @@ Fasta_reader::Fasta_reader(string filename, long start_reading, long end_reading
         throw(stacktrace() + "\n\nError, cannot open file " + filename );
     }
 
-    if (start_reading > 0) {
-      this->_filereader.seekg(start_reading, _filereader.beg);
-      this->file_byte_pos = start_reading;
-    }
+    this->_filereader.seekg(0, ios_base::end);
+    this->_file_length = this->_filereader.tellg();
+    this->_filereader.seekg(start_reading, _filereader.beg);
+    this->file_byte_pos = start_reading;
     
     this->_init_reader();
     
-
-
+    // this->debugfile.open("/tmp/inchworm." + to_string(omp_get_thread_num()));
+    // int count = this->countSequences();
+    // this->debugfile << count << endl;
 }
 
 void Fasta_reader::_init_reader() {
@@ -50,10 +59,12 @@ void Fasta_reader::_init_reader() {
     // primer reader to first fasta header
     getline(this->_filereader, this->_lastline);
     this->file_byte_pos += this->_lastline.length() + 1;
+    this->debugfile << this->_lastline << endl;
 
     while ((! this->_filereader.eof()) && this->_lastline[0] != '>') {
         getline(this->_filereader, this->_lastline);
         this->file_byte_pos += this->_lastline.length() + 1;
+        this->debugfile << this->_lastline << endl;
     }
 
 }
@@ -89,6 +100,11 @@ Fasta_entry Fasta_reader::getNext() {
     return fe;
 }
 
+// 1: this->_lastline = ">3"
+// $6 = {_filereader = <incomplete type>, _lastline = ">3", end_reading = 5641, _file_length = 14524, eof = false, file_byte_pos = 5614}
+// 1: this->_lastline = "CATCTACTTCCTCGAGCAGACAAAG"
+// 1: this->_lastline = ">1"
+// $4 = {_filereader = <incomplete type>, _lastline = ">1", end_reading = 5641, _file_length = 14524, eof = false, file_byte_pos = 5643}
 Fasta_entry Fasta_reader::getNext_mt() {
     
     string sequence;
@@ -97,13 +113,22 @@ Fasta_entry Fasta_reader::getNext_mt() {
 
     header = this->_lastline;
     
+    // ret == true
     ret = !(this->_filereader.eof());
     if (ret == true)
     {
         this->_lastline = "";
         while ((! this->_filereader.eof()) && this->_lastline[0] != '>') {
             getline(this->_filereader, this->_lastline);
+            this->debugfile << this->_lastline << endl;
             
+            // check if only reading section of a file
+            if (this->end_reading > 0) {
+                if (this->file_byte_pos >= end_reading && !this->_filereader.eof()) { // bad: this->_filereader.tellg() >= end_reading) {
+                    // force it to go to the end of the file
+                    this->_filereader.seekg(0, this->_filereader.end);
+                }
+            }
             this->file_byte_pos += this->_lastline.length() + 1;
 
             // cerr << "Comparing mine: " << this->file_byte_pos << " to " << this->_filereader.tellg() << endl;
@@ -114,14 +139,6 @@ Fasta_entry Fasta_reader::getNext_mt() {
         }
     }
 
-    // check if only reading section of a file
-    if (this->end_reading > 0) {
-        if (this->file_byte_pos >= end_reading && !this->_filereader.eof()) { // bad: this->_filereader.tellg() >= end_reading) {
-            // force it to go to the end of the file
-            this->_filereader.seekg(0, this->_filereader.end);
-        }
-    }
-    
     if (ret == true)
     {
         sequence = remove_whitespace(sequence);
@@ -134,20 +151,29 @@ Fasta_entry Fasta_reader::getNext_mt() {
     }
 }
 
-unsigned long Fasta_reader::count_sequences() {
-    _filereader.seekg(file_byte_pos);
+unsigned long Fasta_reader::countSequences() {
+    int myTid = omp_get_thread_num();
+    streampos savepos = _filereader.tellg();
+    streampos startpos = this->start_reading;
+    _filereader.seekg(startpos);
+    streampos curpos = startpos;
+    // ofstream outfile("/tmp/trinity" + std::to_string(omp_get_thread_num()) + ".txt"); 
     char buffer[1024*1024];
     long unsigned int to_read;
     long unsigned int sum = 0;
-    while(file_byte_pos < end_reading) {
-        to_read = end_reading - file_byte_pos;
+    int i=0;
+    while(curpos < end_reading) {
+        to_read = end_reading - curpos;
         if (sizeof(buffer) < to_read) {
             to_read = sizeof(buffer);
         }
         _filereader.read(buffer, to_read);
+        // outfile << buffer;
         sum += count(buffer, buffer + to_read, '>');
-        file_byte_pos += to_read;
+        curpos += to_read;
     }
+    _filereader.seekg(savepos);
+    // sum += count(this->_lastline.begin(), this->_lastline.end(), '>');
     return sum;
 }
 
@@ -164,4 +190,8 @@ map<string,string> Fasta_reader::retrieve_all_seqs_hash() {
     }
     
     return(all_seqs_hash);
+}
+
+long Fasta_reader::getFilelength() {
+    return _file_length;
 }
